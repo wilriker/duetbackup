@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"html"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -30,6 +32,7 @@ type file struct {
 type filelist struct {
 	Dir   string
 	Files []file
+	next  uint64
 }
 
 func (f *file) UnmarshalJSON(b []byte) (err error) {
@@ -70,7 +73,7 @@ func (f *file) UnmarshalJSON(b []byte) (err error) {
 	return nil
 }
 
-func getFileList(baseURL string, dir string) (*filelist, error) {
+func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 
 	fileListURL := "rr_filelist?dir="
 
@@ -90,6 +93,25 @@ func getFileList(baseURL string, dir string) (*filelist, error) {
 	if err != nil {
 		return nil, err
 	}
+	if fl.next > 0 {
+		moreFiles, err := getFileList(baseURL, dir, fl.next)
+		if err != nil {
+			return nil, err
+		}
+		fl.Files = append(fl.Files, moreFiles.Files...)
+	}
+
+	// Sort folders first and by name
+	sort.SliceStable(fl.Files, func(i, j int) bool {
+
+		// Both same type so compare by name
+		if fl.Files[i].Type == fl.Files[j].Type {
+			return fl.Files[i].Name < fl.Files[j].Name
+		}
+
+		// Different types -> sort folders first
+		return fl.Files[i].Type == "d"
+	})
 	return &fl, nil
 }
 
@@ -104,10 +126,19 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
 			return err
 		}
 
-		if fi == nil && file.Type == "d" {
-			fmt.Println("Adding new directory", file.Name)
-			err = os.MkdirAll(fileName, 0755)
-			if err != nil {
+		// It's a directory
+		if file.Type == "d" {
+
+			// Does not exist yet so try to create it
+			if fi == nil {
+				log.Println("Adding new directory", file.Name)
+				if err = os.MkdirAll(fileName, 0755); err != nil {
+					return err
+				}
+			}
+
+			// Go recursively into this directory
+			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName); err != nil {
 				return err
 			}
 			continue
@@ -115,6 +146,11 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
 
 		// File does not exist or is outdated so get it
 		if fi == nil || fi.ModTime().Before(file.Date) {
+			if fi != nil {
+				log.Println("Updating", file.Name)
+			} else {
+				log.Println("Adding", file.Name)
+			}
 
 			// Download file
 			resp, err := http.Get(baseURL + fileDownloadURL + html.EscapeString(file.Name))
@@ -134,11 +170,6 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
 				return err
 			}
 			defer nf.Close()
-			if fi != nil {
-				fmt.Println("Updating file", file.Name)
-			} else {
-				fmt.Println("Adding new file", file.Name)
-			}
 
 			// Write contents to local file
 			_, err = nf.Write(body)
@@ -149,9 +180,50 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
 			// Adjust mtime
 			os.Chtimes(fileName, file.Date, file.Date)
 		} else {
-			fmt.Println(file.Name, "is up-to-date")
+			log.Println(file.Name, "is up-to-date")
 		}
 
+	}
+
+	return nil
+}
+
+func removeDeletedFiles(fl *filelist, outDir string) error {
+
+	existingFiles := make(map[string]struct{})
+	for _, f := range fl.Files {
+		existingFiles[f.Name] = struct{}{}
+	}
+
+	files, err := ioutil.ReadDir(outDir)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		if _, exists := existingFiles[f.Name()]; !exists {
+			log.Println("Want to delete", f.Name())
+		}
+	}
+
+	return nil
+}
+
+func syncFolder(address, folder, outDir string) error {
+	log.Println("Fetching filelist for", folder)
+	fl, err := getFileList(address, html.EscapeString(folder), 0)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Checking files to be downloaded from", folder)
+	if err = updateLocalFiles(address, fl, outDir); err != nil {
+		return err
+	}
+
+	log.Println("Removing no longer existing files in", outDir)
+	if err = removeDeletedFiles(fl, outDir); err != nil {
+		return err
 	}
 
 	return nil
@@ -179,7 +251,7 @@ func main() {
 	flag.Parse()
 
 	if domain == "" || outDir == "" {
-		fmt.Println("domain and outDir are required")
+		log.Println("domain and outDir are required")
 		os.Exit(1)
 	}
 
@@ -187,17 +259,13 @@ func main() {
 
 	// Try to connect
 	if err := connect(address, password); err != nil {
-		fmt.Println("Duet currently not available")
+		log.Println("Duet currently not available")
 		os.Exit(0)
 	}
 
-	fl, err := getFileList(address, html.EscapeString(dirToBackup))
+	err := syncFolder(address, dirToBackup, outDir)
 	if err != nil {
-		panic(err)
-	}
-
-	err = updateLocalFiles(address, fl, outDir)
-	if err != nil {
-		panic(err)
+		log.Fatal(err)
+		os.Exit(1)
 	}
 }
