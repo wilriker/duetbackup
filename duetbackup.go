@@ -202,7 +202,10 @@ func removeDeletedFiles(fl *filelist, outDir string) error {
 
 	for _, f := range files {
 		if _, exists := existingFiles[f.Name()]; !exists {
-			log.Println("Want to delete", f.Name())
+			if err := os.Remove(outDir + "/" + f.Name()); err != nil {
+				return err
+			}
+			log.Println("Removed", f.Name())
 		}
 	}
 
@@ -221,7 +224,7 @@ func syncFolder(address, folder, outDir string) error {
 		return err
 	}
 
-	log.Println("Removing no longer existing files in", outDir)
+	log.Println("Checking no longer existing files in", outDir)
 	if err = removeDeletedFiles(fl, outDir); err != nil {
 		return err
 	}
