@@ -115,7 +115,7 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 	return &fl, nil
 }
 
-func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
+func updateLocalFiles(baseURL string, fl *filelist, outDir string, keepLocal bool) error {
 
 	fileDownloadURL := "rr_download?name=" + html.EscapeString(fl.Dir) + "/"
 
@@ -138,7 +138,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string) error {
 			}
 
 			// Go recursively into this directory
-			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName); err != nil {
+			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName, keepLocal); err != nil {
 				return err
 			}
 			continue
@@ -212,7 +212,7 @@ func removeDeletedFiles(fl *filelist, outDir string) error {
 	return nil
 }
 
-func syncFolder(address, folder, outDir string) error {
+func syncFolder(address, folder, outDir string, keepLocal bool) error {
 	log.Println("Fetching filelist for", folder)
 	fl, err := getFileList(address, html.EscapeString(folder), 0)
 	if err != nil {
@@ -220,13 +220,15 @@ func syncFolder(address, folder, outDir string) error {
 	}
 
 	log.Println("Checking files to be downloaded from", folder)
-	if err = updateLocalFiles(address, fl, outDir); err != nil {
+	if err = updateLocalFiles(address, fl, outDir, keepLocal); err != nil {
 		return err
 	}
 
-	log.Println("Checking no longer existing files in", outDir)
-	if err = removeDeletedFiles(fl, outDir); err != nil {
-		return err
+	if !keepLocal {
+		log.Println("Checking no longer existing files in", outDir)
+		if err = removeDeletedFiles(fl, outDir); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -244,6 +246,7 @@ func connect(address, password string) error {
 
 func main() {
 	var domain, dirToBackup, outDir, password string
+	var keepLocal bool
 	var port uint64
 
 	flag.StringVar(&domain, "domain", "", "Domain of Duet Wifi")
@@ -251,6 +254,7 @@ func main() {
 	flag.StringVar(&dirToBackup, "dirToBackup", sysDir, "Directory on Duet to create a backup of")
 	flag.StringVar(&outDir, "outDir", "", "Output dir of backup")
 	flag.StringVar(&password, "password", "reprap", "Connection password")
+	flag.BoolVar(&keepLocal, "keepLocal", false, "Keep files locally that have been deleted on the Duet")
 	flag.Parse()
 
 	if domain == "" || outDir == "" {
@@ -266,7 +270,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	err := syncFolder(address, dirToBackup, outDir)
+	err := syncFolder(address, dirToBackup, outDir, keepLocal)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)

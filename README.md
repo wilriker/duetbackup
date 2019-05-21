@@ -9,6 +9,8 @@ Usage of ./duetbackup:
           Directory on Duet to create a backup of (default "0:/sys")
     -domain string
         Domain of Duet Wifi
+    -keepLocal
+        Keep files locally that have been deleted on the Duet
     -outDir string
           Output dir of backup
     -password string
