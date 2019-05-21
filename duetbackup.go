@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"html"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -117,7 +117,7 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 
 func updateLocalFiles(baseURL string, fl *filelist, outDir string, keepLocal bool) error {
 
-	fileDownloadURL := "rr_download?name=" + html.EscapeString(fl.Dir) + "/"
+	fileDownloadURL := "rr_download?name=" + url.QueryEscape(fl.Dir+"/")
 
 	for _, file := range fl.Files {
 		fileName := outDir + "/" + file.Name
@@ -153,7 +153,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, keepLocal boo
 			}
 
 			// Download file
-			resp, err := http.Get(baseURL + fileDownloadURL + html.EscapeString(file.Name))
+			resp, err := http.Get(baseURL + fileDownloadURL + url.QueryEscape(file.Name))
 			if err != nil {
 				return err
 			}
@@ -214,7 +214,7 @@ func removeDeletedFiles(fl *filelist, outDir string) error {
 
 func syncFolder(address, folder, outDir string, keepLocal bool) error {
 	log.Println("Fetching filelist for", folder)
-	fl, err := getFileList(address, html.EscapeString(folder), 0)
+	fl, err := getFileList(address, url.QueryEscape(folder), 0)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func getAddress(domain string, port uint64) string {
 }
 
 func connect(address, password string) error {
-	path := "rr_connect?password=" + html.EscapeString(password) + "&time=" + html.EscapeString(time.Now().Format("2006-01-02T15:04:05"))
+	path := "rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
 	_, err := http.Get(address + path)
 	return err
 }
