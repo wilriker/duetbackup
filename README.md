@@ -18,3 +18,6 @@ Usage of ./duetbackup:
     -removeLocal
         Remove files locally that have been deleted on the Duet
 ```
+
+## Feedback
+Please provide any feedback either here in the Issues or send a pull request or go to [the Duet3D forum](https://forum.duet3d.com/topic/10709/duetbackup-cli-tool-to-backup-your-duet-sd-card).
