@@ -21,6 +21,7 @@ const (
 
 var offsetString string
 var once sync.Once
+var httpClient *http.Client
 
 type file struct {
 	Type string
@@ -153,7 +154,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal b
 			}
 
 			// Download file
-			resp, err := http.Get(baseURL + fileDownloadURL + url.QueryEscape(file.Name))
+			resp, err := httpClient.Get(baseURL + fileDownloadURL + url.QueryEscape(file.Name))
 			if err != nil {
 				return err
 			}
@@ -261,6 +262,9 @@ func main() {
 		log.Println("domain and outDir are required")
 		os.Exit(1)
 	}
+
+	tr := &http.Transport{DisableCompression: true}
+	httpClient = &http.Client{Transport: tr}
 
 	address := getAddress(domain, port)
 
