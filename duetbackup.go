@@ -57,10 +57,8 @@ func (f *file) UnmarshalJSON(b []byte) (err error) {
 			// FIXME This needs to be solved better!
 			// Get timezone offset to append to the date string that has no timezone offset
 			once.Do(func() {
-				loc, _ := time.LoadLocation("Europe/Berlin")
-				_, offset := time.Now().In(loc).Zone()
-				o := int64(offset) / 3600
-				offsetString = fmt.Sprintf("%+03d:00", o)
+				_, offset := time.Now().Zone()
+				offsetString = fmt.Sprintf("%+03d:00", int64(offset) / 3600)
 			})
 
 			// Parse date string
@@ -78,7 +76,7 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 
 	fileListURL := "rr_filelist?dir="
 
-	resp, err := http.Get(baseURL + fileListURL + dir)
+	resp, err := httpClient.Get(baseURL + fileListURL + dir)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +239,7 @@ func getAddress(domain string, port uint64) string {
 
 func connect(address, password string) error {
 	path := "rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
-	_, err := http.Get(address + path)
+	_, err := httpClient.Get(address + path)
 	return err
 }
 
