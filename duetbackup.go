@@ -18,14 +18,17 @@ const (
 	sysDir = "0:/sys"
 )
 
-var localTimeZone = time.Now().Location()
 var httpClient *http.Client
+
+type localTime struct {
+	Time time.Time
+}
 
 type file struct {
 	Type string
 	Name string
 	Size uint64
-	Date time.Time `json:"date,string"`
+	Date localTime `json:"date"`
 }
 
 type filelist struct {
@@ -34,33 +37,10 @@ type filelist struct {
 	next  uint64
 }
 
-func (f *file) UnmarshalJSON(b []byte) (err error) {
-	var raw map[string]interface{}
-
-	// Let regular Unmarshal do the main work
-	err = json.Unmarshal(b, &raw)
-	if err != nil {
-		return err
-	}
-
-	for k, v := range raw {
-		switch k {
-		case "type":
-			f.Type = v.(string)
-		case "name":
-			f.Name = v.(string)
-		case "size":
-			f.Size = uint64(v.(float64))
-		case "date":
-			// Parse date string in local time (it does not provide any timezone information)
-			d, err := time.ParseInLocation("2006-01-02T15:04:05", v.(string), localTimeZone)
-			if err != nil {
-				return err
-			}
-			f.Date = d
-		}
-	}
-	return nil
+func (lt *localTime) UnmarshalJSON(b []byte) (err error) {
+	// Parse date string in local time (it does not provide any timezone information)
+	lt.Time, err = time.ParseInLocation(`"2006-01-02T15:04:05"`, string(b), time.Local)
+	return err
 }
 
 func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
@@ -137,7 +117,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 		}
 
 		// File does not exist or is outdated so get it
-		if fi == nil || fi.ModTime().Before(file.Date) {
+		if fi == nil || fi.ModTime().Before(file.Date.Time) {
 			if verbose {
 				if fi != nil {
 					log.Println("Updating", file.Name)
@@ -172,7 +152,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 			}
 
 			// Adjust mtime
-			os.Chtimes(fileName, file.Date, file.Date)
+			os.Chtimes(fileName, file.Date.Time, file.Date.Time)
 		} else {
 			if verbose {
 				log.Println(file.Name, "is up-to-date")
