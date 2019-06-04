@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -19,8 +17,7 @@ const (
 	sysDir = "0:/sys"
 )
 
-var offsetString string
-var once sync.Once
+var localTimeZone = time.Now().Location()
 var httpClient *http.Client
 
 type file struct {
@@ -54,15 +51,8 @@ func (f *file) UnmarshalJSON(b []byte) (err error) {
 		case "size":
 			f.Size = uint64(v.(float64))
 		case "date":
-			// FIXME This needs to be solved better!
-			// Get timezone offset to append to the date string that has no timezone offset
-			once.Do(func() {
-				_, offset := time.Now().Zone()
-				offsetString = fmt.Sprintf("%+03d:00", int64(offset) / 3600)
-			})
-
-			// Parse date string
-			d, err := time.Parse(time.RFC3339, v.(string)+offsetString)
+			// Parse date string in local time (it does not provide any timezone information)
+			d, err := time.ParseInLocation("2006-01-02T15:04:05", v.(string), localTimeZone)
 			if err != nil {
 				return err
 			}
