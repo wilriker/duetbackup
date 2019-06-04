@@ -16,7 +16,9 @@ import (
 )
 
 const (
-	sysDir = "0:/sys"
+	sysDir    = "0:/sys"
+	Directory = "d"
+	File      = "f"
 )
 
 var httpClient *http.Client
@@ -108,15 +110,42 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 	return &fl, nil
 }
 
+func ensureOutDirExists(outDir string, verbose bool) error {
+	path, err := filepath.Abs(outDir)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if fi == nil {
+		if verbose {
+			log.Println("  Creating directory", path)
+		}
+		if err = os.MkdirAll(path, 0755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls excludes, removeLocal, verbose bool) error {
+
+	if err := ensureOutDirExists(outDir, verbose); err != nil {
+		return err
+	}
 
 	fileDownloadURL := "rr_download?name="
 
 	for _, file := range fl.Files {
+		if file.Type == Directory {
+			continue
+		}
 		remoteFilename := fl.Dir + "/" + file.Name
 		if excls.Contains(remoteFilename) {
 			if verbose {
-				log.Println("  Skipping:  ", remoteFilename)
+				log.Println("  Excluded:  ", remoteFilename)
 			}
 			continue
 		}
@@ -124,26 +153,6 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 		fi, err := os.Stat(fileName)
 		if err != nil && !os.IsNotExist(err) {
 			return err
-		}
-
-		// It's a directory
-		if file.Type == "d" {
-
-			// Does not exist yet so try to create it
-			if fi == nil {
-				if verbose {
-					log.Println("  Creating directory", fileName)
-				}
-				if err = os.MkdirAll(fileName, 0755); err != nil {
-					return err
-				}
-			}
-
-			// Go recursively into this directory
-			if err = syncFolder(baseURL, remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
-				return err
-			}
-			continue
 		}
 
 		// File does not exist or is outdated so get it
@@ -212,7 +221,7 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 				return err
 			}
 			if verbose {
-				log.Println("Removed", f.Name())
+				log.Println("  Removed:   ", f.Name())
 			}
 		}
 	}
@@ -235,6 +244,17 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 	if removeLocal {
 		log.Println("Removing no longer existing files in", outDir)
 		if err = removeDeletedFiles(fl, outDir, verbose); err != nil {
+			return err
+		}
+	}
+
+	for _, file := range fl.Files {
+		if file.Type != Directory {
+			continue
+		}
+		remoteFilename := fl.Dir + "/" + file.Name
+		fileName := filepath.Join(outDir, file.Name)
+		if err = syncFolder(address, remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
 			return err
 		}
 	}
