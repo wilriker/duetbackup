@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
@@ -104,12 +105,12 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 	return &fl, nil
 }
 
-func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal bool) error {
+func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, verbose bool) error {
 
 	fileDownloadURL := "rr_download?name=" + url.QueryEscape(fl.Dir+"/")
 
 	for _, file := range fl.Files {
-		fileName := outDir + "/" + file.Name
+		fileName := filepath.Join(outDir, file.Name)
 		fi, err := os.Stat(fileName)
 		if err != nil && !os.IsNotExist(err) {
 			return err
@@ -120,14 +121,16 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal b
 
 			// Does not exist yet so try to create it
 			if fi == nil {
-				log.Println("Adding new directory", file.Name)
+				if verbose {
+					log.Println("Adding new directory", fileName)
+				}
 				if err = os.MkdirAll(fileName, 0755); err != nil {
 					return err
 				}
 			}
 
 			// Go recursively into this directory
-			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName, removeLocal); err != nil {
+			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName, removeLocal, verbose); err != nil {
 				return err
 			}
 			continue
@@ -135,10 +138,12 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal b
 
 		// File does not exist or is outdated so get it
 		if fi == nil || fi.ModTime().Before(file.Date) {
-			if fi != nil {
-				log.Println("Updating", file.Name)
-			} else {
-				log.Println("Adding", file.Name)
+			if verbose {
+				if fi != nil {
+					log.Println("Updating", file.Name)
+				} else {
+					log.Println("Adding", file.Name)
+				}
 			}
 
 			// Download file
@@ -169,7 +174,9 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal b
 			// Adjust mtime
 			os.Chtimes(fileName, file.Date, file.Date)
 		} else {
-			log.Println(file.Name, "is up-to-date")
+			if verbose {
+				log.Println(file.Name, "is up-to-date")
+			}
 		}
 
 	}
@@ -177,7 +184,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal b
 	return nil
 }
 
-func removeDeletedFiles(fl *filelist, outDir string) error {
+func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 
 	existingFiles := make(map[string]struct{})
 	for _, f := range fl.Files {
@@ -191,31 +198,33 @@ func removeDeletedFiles(fl *filelist, outDir string) error {
 
 	for _, f := range files {
 		if _, exists := existingFiles[f.Name()]; !exists {
-			if err := os.Remove(outDir + "/" + f.Name()); err != nil {
+			if err := os.Remove(filepath.Join(outDir, f.Name())); err != nil {
 				return err
 			}
-			log.Println("Removed", f.Name())
+			if verbose {
+				log.Println("Removed", f.Name())
+			}
 		}
 	}
 
 	return nil
 }
 
-func syncFolder(address, folder, outDir string, removeLocal bool) error {
+func syncFolder(address, folder, outDir string, removeLocal, verbose bool) error {
 	log.Println("Fetching filelist for", folder)
 	fl, err := getFileList(address, url.QueryEscape(folder), 0)
 	if err != nil {
 		return err
 	}
 
-	log.Println("Checking files to be downloaded from", folder)
-	if err = updateLocalFiles(address, fl, outDir, removeLocal); err != nil {
+	log.Println("Downloading new/changed files from", folder, "to", outDir)
+	if err = updateLocalFiles(address, fl, outDir, removeLocal, verbose); err != nil {
 		return err
 	}
 
 	if removeLocal {
-		log.Println("Checking no longer existing files in", outDir)
-		if err = removeDeletedFiles(fl, outDir); err != nil {
+		log.Println("Removing no longer existing files in", outDir)
+		if err = removeDeletedFiles(fl, outDir, verbose); err != nil {
 			return err
 		}
 	}
@@ -227,7 +236,10 @@ func getAddress(domain string, port uint64) string {
 	return "http://" + domain + ":" + strconv.FormatUint(port, 10) + "/"
 }
 
-func connect(address, password string) error {
+func connect(address, password string, verbose bool) error {
+	if verbose {
+		log.Println("Trying to connect to Duet")
+	}
 	path := "rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
 	_, err := httpClient.Get(address + path)
 	return err
@@ -235,7 +247,7 @@ func connect(address, password string) error {
 
 func main() {
 	var domain, dirToBackup, outDir, password string
-	var removeLocal bool
+	var removeLocal, verbose bool
 	var port uint64
 
 	flag.StringVar(&domain, "domain", "", "Domain of Duet Wifi")
@@ -244,11 +256,17 @@ func main() {
 	flag.StringVar(&outDir, "outDir", "", "Output dir of backup")
 	flag.StringVar(&password, "password", "reprap", "Connection password")
 	flag.BoolVar(&removeLocal, "removeLocal", false, "Remove files locally that have been deleted on the Duet")
+	flag.BoolVar(&verbose, "verbose", false, "Output more details")
 	flag.Parse()
 
 	if domain == "" || outDir == "" {
 		log.Println("domain and outDir are required")
 		os.Exit(1)
+	}
+
+	if port > 65535 {
+		log.Println("Invalid port", port)
+		os.Exit(2)
 	}
 
 	tr := &http.Transport{DisableCompression: true}
@@ -257,14 +275,20 @@ func main() {
 	address := getAddress(domain, port)
 
 	// Try to connect
-	if err := connect(address, password); err != nil {
+	if err := connect(address, password, verbose); err != nil {
 		log.Println("Duet currently not available")
 		os.Exit(0)
 	}
 
-	err := syncFolder(address, dirToBackup, outDir, removeLocal)
+	// Get absolute path from user's input
+	absPath, err := filepath.Abs(outDir)
+	if err != nil {
+		// Fall back to original user's input
+		absPath = outDir
+	}
+
+	err = syncFolder(address, dirToBackup, absPath, removeLocal, verbose)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 }
