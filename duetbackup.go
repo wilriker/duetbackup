@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,28 @@ func (lt *localTime) UnmarshalJSON(b []byte) (err error) {
 	// Parse date string in local time (it does not provide any timezone information)
 	lt.Time, err = time.ParseInLocation(`"2006-01-02T15:04:05"`, string(b), time.Local)
 	return err
+}
+
+type excludes struct {
+	excls []string
+}
+
+func (e *excludes) String() string {
+	return strings.Join(e.excls, ",")
+}
+
+func (e *excludes) Set(value string) error {
+	e.excls = append(e.excls, value)
+	return nil
+}
+
+func (e *excludes) Contains(path string) bool {
+	for _, excl := range e.excls {
+		if strings.HasPrefix(path, excl) {
+			return true
+		}
+	}
+	return false
 }
 
 func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
@@ -85,11 +108,18 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 	return &fl, nil
 }
 
-func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, verbose bool) error {
+func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls excludes, removeLocal, verbose bool) error {
 
-	fileDownloadURL := "rr_download?name=" + url.QueryEscape(fl.Dir+"/")
+	fileDownloadURL := "rr_download?name="
 
 	for _, file := range fl.Files {
+		remoteFilename := fl.Dir + "/" + file.Name
+		if excls.Contains(remoteFilename) {
+			if verbose {
+				log.Println("  Skipping:  ", remoteFilename)
+			}
+			continue
+		}
 		fileName := filepath.Join(outDir, file.Name)
 		fi, err := os.Stat(fileName)
 		if err != nil && !os.IsNotExist(err) {
@@ -102,7 +132,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 			// Does not exist yet so try to create it
 			if fi == nil {
 				if verbose {
-					log.Println("Adding new directory", fileName)
+					log.Println("  Creating directory", fileName)
 				}
 				if err = os.MkdirAll(fileName, 0755); err != nil {
 					return err
@@ -110,7 +140,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 			}
 
 			// Go recursively into this directory
-			if err = syncFolder(baseURL, fl.Dir+"/"+file.Name, fileName, removeLocal, verbose); err != nil {
+			if err = syncFolder(baseURL, remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
 				return err
 			}
 			continue
@@ -120,14 +150,14 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 		if fi == nil || fi.ModTime().Before(file.Date.Time) {
 			if verbose {
 				if fi != nil {
-					log.Println("Updating", file.Name)
+					log.Println("  Updating:  ", remoteFilename)
 				} else {
-					log.Println("Adding", file.Name)
+					log.Println("  Adding:    ", remoteFilename)
 				}
 			}
 
 			// Download file
-			resp, err := httpClient.Get(baseURL + fileDownloadURL + url.QueryEscape(file.Name))
+			resp, err := httpClient.Get(baseURL + fileDownloadURL + url.QueryEscape(remoteFilename))
 			if err != nil {
 				return err
 			}
@@ -155,7 +185,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, removeLocal, 
 			os.Chtimes(fileName, file.Date.Time, file.Date.Time)
 		} else {
 			if verbose {
-				log.Println(file.Name, "is up-to-date")
+				log.Println("  Up-to-date:", remoteFilename)
 			}
 		}
 
@@ -190,7 +220,7 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 	return nil
 }
 
-func syncFolder(address, folder, outDir string, removeLocal, verbose bool) error {
+func syncFolder(address, folder, outDir string, excls excludes, removeLocal, verbose bool) error {
 	log.Println("Fetching filelist for", folder)
 	fl, err := getFileList(address, url.QueryEscape(folder), 0)
 	if err != nil {
@@ -198,7 +228,7 @@ func syncFolder(address, folder, outDir string, removeLocal, verbose bool) error
 	}
 
 	log.Println("Downloading new/changed files from", folder, "to", outDir)
-	if err = updateLocalFiles(address, fl, outDir, removeLocal, verbose); err != nil {
+	if err = updateLocalFiles(address, fl, outDir, excls, removeLocal, verbose); err != nil {
 		return err
 	}
 
@@ -229,6 +259,7 @@ func main() {
 	var domain, dirToBackup, outDir, password string
 	var removeLocal, verbose bool
 	var port uint64
+	var excls excludes
 
 	flag.StringVar(&domain, "domain", "", "Domain of Duet Wifi")
 	flag.Uint64Var(&port, "port", 80, "Port of Duet Wifi")
@@ -237,6 +268,7 @@ func main() {
 	flag.StringVar(&password, "password", "reprap", "Connection password")
 	flag.BoolVar(&removeLocal, "removeLocal", false, "Remove files locally that have been deleted on the Duet")
 	flag.BoolVar(&verbose, "verbose", false, "Output more details")
+	flag.Var(&excls, "exclude", "Exclude paths starting with this string (can be passed multiple times)")
 	flag.Parse()
 
 	if domain == "" || outDir == "" {
@@ -267,7 +299,7 @@ func main() {
 		absPath = outDir
 	}
 
-	err = syncFolder(address, dirToBackup, absPath, removeLocal, verbose)
+	err = syncFolder(address, dirToBackup, absPath, excls, removeLocal, verbose)
 	if err != nil {
 		log.Fatal(err)
 	}
