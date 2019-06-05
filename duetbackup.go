@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	File      = "f"
 )
 
+var multiSlashRegex = regexp.MustCompile(`/{2,}`)
 var httpClient *http.Client
 
 type localTime struct {
@@ -55,7 +57,7 @@ func (e *excludes) String() string {
 }
 
 func (e *excludes) Set(value string) error {
-	e.excls = append(e.excls, value)
+	e.excls = append(e.excls, cleanPath(value))
 	return nil
 }
 
@@ -66,6 +68,12 @@ func (e *excludes) Contains(path string) bool {
 		}
 	}
 	return false
+}
+
+func cleanPath(path string) string {
+	cleanedPath := multiSlashRegex.ReplaceAllString(path, "/")
+	cleanedPath = strings.TrimSuffix(cleanedPath, "/")
+	return cleanedPath
 }
 
 func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
@@ -217,7 +225,7 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 
 	for _, f := range files {
 		if _, exists := existingFiles[f.Name()]; !exists {
-			if err := os.Remove(filepath.Join(outDir, f.Name())); err != nil {
+			if err := os.RemoveAll(filepath.Join(outDir, f.Name())); err != nil {
 				return err
 			}
 			if verbose {
@@ -230,6 +238,11 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 }
 
 func syncFolder(address, folder, outDir string, excls excludes, removeLocal, verbose bool) error {
+	if excls.Contains(folder) {
+		log.Println("Excluding", folder)
+		return nil
+	}
+
 	log.Println("Fetching filelist for", folder)
 	fl, err := getFileList(address, url.QueryEscape(folder), 0)
 	if err != nil {
@@ -319,7 +332,7 @@ func main() {
 		absPath = outDir
 	}
 
-	err = syncFolder(address, dirToBackup, absPath, excls, removeLocal, verbose)
+	err = syncFolder(address, cleanPath(dirToBackup), absPath, excls, removeLocal, verbose)
 	if err != nil {
 		log.Fatal(err)
 	}
