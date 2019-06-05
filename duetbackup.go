@@ -22,6 +22,7 @@ const (
 	typeFile        = "f"
 	fileDownloadURL = "rr_download?name="
 	fileListURL     = "rr_filelist?dir="
+	dirMarker       = ".duetbackup"
 )
 
 var multiSlashRegex = regexp.MustCompile(`/{2,}`)
@@ -145,6 +146,11 @@ func ensureOutDirExists(outDir string, verbose bool) error {
 			return err
 		}
 	}
+	markerFile, err := os.Create(filepath.Join(path, dirMarker))
+	if err != nil {
+		return err
+	}
+	markerFile.Close()
 	return nil
 }
 
@@ -216,6 +222,21 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 	return nil
 }
 
+func isManagedDirectory(basePath string, f os.FileInfo) bool {
+	if !f.IsDir() {
+		return false
+	}
+	markerFile := filepath.Join(basePath, f.Name(), dirMarker)
+	fi, err := os.Stat(markerFile)
+	if err != nil && !os.IsNotExist(err) {
+		return false
+	}
+	if fi == nil {
+		return false
+	}
+	return true
+}
+
 func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 
 	existingFiles := make(map[string]struct{})
@@ -230,6 +251,11 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 
 	for _, f := range files {
 		if _, exists := existingFiles[f.Name()]; !exists {
+
+			// Skip directories not managed by us as well as our marker file
+			if !isManagedDirectory(outDir, f) || f.Name() == dirMarker {
+				continue
+			}
 			if err := os.RemoveAll(filepath.Join(outDir, f.Name())); err != nil {
 				return err
 			}
