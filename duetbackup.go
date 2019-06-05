@@ -20,8 +20,8 @@ const (
 	sysDir          = "0:/sys"
 	typeDirectory   = "d"
 	typeFile        = "f"
-	fileDownloadURL = "rr_download?name="
-	fileListURL     = "rr_filelist?dir="
+	fileDownloadURL = "/rr_download?name="
+	fileListURL     = "/rr_filelist?dir="
 	dirMarker       = ".duetbackup"
 )
 
@@ -32,13 +32,15 @@ type localTime struct {
 	Time time.Time
 }
 
+// file resembles the JSON object returned in the files property of the rr_filelist response
 type file struct {
 	Type string
 	Name string
 	Size uint64
-	Date localTime `json:"date"`
+	Date localTime
 }
 
+// filelist resembled the JSON object in rr_filelist
 type filelist struct {
 	Dir   string
 	Files []file
@@ -64,6 +66,7 @@ func (e *excludes) Set(value string) error {
 	return nil
 }
 
+// Contains checks if the given path starts with any of the known excludes
 func (e *excludes) Contains(path string) bool {
 	for _, excl := range e.excls {
 		if strings.HasPrefix(path, excl) {
@@ -73,12 +76,17 @@ func (e *excludes) Contains(path string) bool {
 	return false
 }
 
+// cleanPath will reduce multiple consecutive slashes into one and
+// then remove a trailing slash if any.
 func cleanPath(path string) string {
 	cleanedPath := multiSlashRegex.ReplaceAllString(path, "/")
 	cleanedPath = strings.TrimSuffix(cleanedPath, "/")
 	return cleanedPath
 }
 
+// download will perform a GET request on the given URL and return
+// the content of the response, a duration on how long it took (including
+// setup of connection) or an error in case something went wrong
 func download(url string) ([]byte, *time.Duration, error) {
 	start := time.Now()
 	resp, err := httpClient.Get(url)
@@ -107,6 +115,8 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// If the response signals there is more to fetch do it recursively
 	if fl.next > 0 {
 		moreFiles, err := getFileList(baseURL, dir, fl.next)
 		if err != nil {
@@ -124,20 +134,26 @@ func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
 		}
 
 		// Different types -> sort folders first
-		return fl.Files[i].Type == "d"
+		return fl.Files[i].Type == typeDirectory
 	})
 	return &fl, nil
 }
 
+// ensureOutDirExists will create the local directory if it does not exist
+// and will in any case create the marker file inside it
 func ensureOutDirExists(outDir string, verbose bool) error {
 	path, err := filepath.Abs(outDir)
 	if err != nil {
 		return err
 	}
+
+	// Check if the directory exists
 	fi, err := os.Stat(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
+	// Create the directory
 	if fi == nil {
 		if verbose {
 			log.Println("  Creating directory", path)
@@ -146,11 +162,14 @@ func ensureOutDirExists(outDir string, verbose bool) error {
 			return err
 		}
 	}
+
+	// Create the marker file
 	markerFile, err := os.Create(filepath.Join(path, dirMarker))
 	if err != nil {
 		return err
 	}
 	markerFile.Close()
+
 	return nil
 }
 
@@ -165,12 +184,15 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 			continue
 		}
 		remoteFilename := fl.Dir + "/" + file.Name
+
+		// Skip files covered by an exclude pattern
 		if excls.Contains(remoteFilename) {
 			if verbose {
 				log.Println("  Excluding: ", remoteFilename)
 			}
 			continue
 		}
+
 		fileName := filepath.Join(outDir, file.Name)
 		fi, err := os.Stat(fileName)
 		if err != nil && !os.IsNotExist(err) {
@@ -222,6 +244,9 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 	return nil
 }
 
+// isManagedDirectory checks wether the given path is a directory and
+// if so if it contains the marker file. It will return false in case
+// any error has occured.
 func isManagedDirectory(basePath string, f os.FileInfo) bool {
 	if !f.IsDir() {
 		return false
@@ -239,6 +264,7 @@ func isManagedDirectory(basePath string, f os.FileInfo) bool {
 
 func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 
+	// Pseudo hash-set of known remote filenames
 	existingFiles := make(map[string]struct{})
 	for _, f := range fl.Files {
 		existingFiles[f.Name] = struct{}{}
@@ -269,6 +295,8 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 }
 
 func syncFolder(address, folder, outDir string, excls excludes, removeLocal, verbose bool) error {
+
+	// Skip complete directories if they are covered by an exclude pattern
 	if excls.Contains(folder) {
 		log.Println("Excluding", folder)
 		return nil
@@ -292,6 +320,7 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 		}
 	}
 
+	// Traverse into subdirectories
 	for _, file := range fl.Files {
 		if file.Type != typeDirectory {
 			continue
@@ -307,14 +336,14 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 }
 
 func getAddress(domain string, port uint64) string {
-	return "http://" + domain + ":" + strconv.FormatUint(port, 10) + "/"
+	return "http://" + domain + ":" + strconv.FormatUint(port, 10)
 }
 
 func connect(address, password string, verbose bool) error {
 	if verbose {
 		log.Println("Trying to connect to Duet")
 	}
-	path := "rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
+	path := "/rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
 	_, err := httpClient.Get(address + path)
 	return err
 }
@@ -336,13 +365,11 @@ func main() {
 	flag.Parse()
 
 	if domain == "" || outDir == "" {
-		log.Println("domain and outDir are required")
-		os.Exit(1)
+		log.Fatal("-domain and -outDir are mandatory parameters")
 	}
 
 	if port > 65535 {
-		log.Println("Invalid port", port)
-		os.Exit(2)
+		log.Fatal("Invalid port", port)
 	}
 
 	tr := &http.Transport{DisableCompression: true}
@@ -363,8 +390,7 @@ func main() {
 		absPath = outDir
 	}
 
-	err = syncFolder(address, cleanPath(dirToBackup), absPath, excls, removeLocal, verbose)
-	if err != nil {
+	if err = syncFolder(address, cleanPath(dirToBackup), absPath, excls, removeLocal, verbose); err != nil {
 		log.Fatal(err)
 	}
 }
