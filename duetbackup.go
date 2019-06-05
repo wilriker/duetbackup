@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	sysDir    = "0:/sys"
-	Directory = "d"
-	File      = "f"
+	sysDir          = "0:/sys"
+	typeDirectory   = "d"
+	typeFile        = "f"
+	fileDownloadURL = "rr_download?name="
+	fileListURL     = "rr_filelist?dir="
 )
 
 var multiSlashRegex = regexp.MustCompile(`/{2,}`)
@@ -76,17 +78,25 @@ func cleanPath(path string) string {
 	return cleanedPath
 }
 
-func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
-
-	fileListURL := "rr_filelist?dir="
-
-	resp, err := httpClient.Get(baseURL + fileListURL + dir)
+func download(url string) ([]byte, *time.Duration, error) {
+	start := time.Now()
+	resp, err := httpClient.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
+	duration := time.Since(start)
+	if err != nil {
+		return nil, nil, err
+	}
+	return body, &duration, nil
+}
+
+func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
+
+	body, _, err := download(baseURL + fileListURL + dir)
 	if err != nil {
 		return nil, err
 	}
@@ -144,16 +154,14 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 		return err
 	}
 
-	fileDownloadURL := "rr_download?name="
-
 	for _, file := range fl.Files {
-		if file.Type == Directory {
+		if file.Type == typeDirectory {
 			continue
 		}
 		remoteFilename := fl.Dir + "/" + file.Name
 		if excls.Contains(remoteFilename) {
 			if verbose {
-				log.Println("  Excluded:  ", remoteFilename)
+				log.Println("  Excluding: ", remoteFilename)
 			}
 			continue
 		}
@@ -166,23 +174,20 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 		// File does not exist or is outdated so get it
 		if fi == nil || fi.ModTime().Before(file.Date.Time) {
 			if verbose {
-				if fi != nil {
-					log.Println("  Updating:  ", remoteFilename)
-				} else {
-					log.Println("  Adding:    ", remoteFilename)
-				}
 			}
 
 			// Download file
-			resp, err := httpClient.Get(baseURL + fileDownloadURL + url.QueryEscape(remoteFilename))
+			body, duration, err := download(baseURL + fileDownloadURL + url.QueryEscape(remoteFilename))
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
-
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				return err
+			if verbose {
+				kibs := (float64(file.Size) / duration.Seconds()) / 1024
+				if fi != nil {
+					log.Printf("  Updated:   %s (%.1f KiB/s)", remoteFilename, kibs)
+				} else {
+					log.Printf("  Added:     %s (%.1f KiB/s)", remoteFilename, kibs)
+				}
 			}
 
 			// Open or create corresponding local file
@@ -262,7 +267,7 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 	}
 
 	for _, file := range fl.Files {
-		if file.Type != Directory {
+		if file.Type != typeDirectory {
 			continue
 		}
 		remoteFilename := fl.Dir + "/" + file.Name
