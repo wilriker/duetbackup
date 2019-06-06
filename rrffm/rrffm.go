@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"time"
 )
 
@@ -69,7 +68,7 @@ func New(domain string, port uint64) RRFFileManager {
 	tr := &http.Transport{DisableCompression: true}
 	return &rrffm{
 		httpClient: &http.Client{Transport: tr},
-		baseURL:    "http://" + domain + ":" + strconv.FormatUint(port, 10),
+		baseURL:    fmt.Sprintf("http://%s:%d", domain, port, 10),
 	}
 }
 
