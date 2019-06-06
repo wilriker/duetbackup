@@ -271,9 +271,12 @@ func main() {
 		log.Fatal("Invalid port", port)
 	}
 
-	rfm = rrffm.New(domain, port, verbose)
+	rfm = rrffm.New(domain, port)
 
 	// Try to connect
+	if verbose {
+		log.Println("Trying to connect to Duet")
+	}
 	if err := rfm.Connect(password); err != nil {
 		log.Println("Duet currently not available")
 		os.Exit(0)

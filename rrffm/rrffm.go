@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -26,7 +25,7 @@ const (
 	typeFile        = "f"
 	noErrorResponse = `{"err":0}`
 	// TimeFormat is the format of timestamps used by RRF
-	TimeFormat      = "2006-01-02T15:04:05"
+	TimeFormat = "2006-01-02T15:04:05"
 )
 
 // RRFFileManager provides means to interact with SD card contents on a machine
@@ -63,16 +62,14 @@ type RRFFileManager interface {
 type rrffm struct {
 	httpClient *http.Client
 	baseURL    string
-	verbose    bool
 }
 
 // New creates a new instance of RRFFileManager
-func New(domain string, port uint64, verbose bool) RRFFileManager {
+func New(domain string, port uint64) RRFFileManager {
 	tr := &http.Transport{DisableCompression: true}
 	return &rrffm{
 		httpClient: &http.Client{Transport: tr},
 		baseURL:    "http://" + domain + ":" + strconv.FormatUint(port, 10),
-		verbose:    verbose,
 	}
 }
 
@@ -81,9 +78,6 @@ func (rrffm *rrffm) getTimestamp(time time.Time) string {
 }
 
 func (rrffm *rrffm) Connect(password string) error {
-	if rrffm.verbose {
-		log.Println("Trying to connect to Duet")
-	}
 	_, _, err := rrffm.doGetRequest(fmt.Sprintf(connectURL, rrffm.baseURL, url.QueryEscape(password), url.QueryEscape(rrffm.getTimestamp(time.Now()))))
 	return err
 }
@@ -204,7 +198,7 @@ func (rrffm *rrffm) DeleteRecursive(path string) error {
 	if err != nil {
 		return err
 	}
-	for _, f:= range fl.Files {
+	for _, f := range fl.Files {
 		if !f.IsDir() {
 
 			// Directories come first so once we get here we can skip the remaining
