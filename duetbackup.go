@@ -1,57 +1,24 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"io/ioutil"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
-	"time"
+
+	"github.com/wilriker/duetbackup/rrffm"
 )
 
 const (
-	sysDir          = "0:/sys"
-	typeDirectory   = "d"
-	typeFile        = "f"
-	fileDownloadURL = "/rr_download?name="
-	fileListURL     = "/rr_filelist?dir="
-	dirMarker       = ".duetbackup"
+	sysDir    = "0:/sys"
+	dirMarker = ".duetbackup"
 )
 
+var rfm rrffm.RRFFileManager
 var multiSlashRegex = regexp.MustCompile(`/{2,}`)
-var httpClient *http.Client
-
-type localTime struct {
-	Time time.Time
-}
-
-// file resembles the JSON object returned in the files property of the rr_filelist response
-type file struct {
-	Type string
-	Name string
-	Size uint64
-	Date localTime
-}
-
-// filelist resembled the JSON object in rr_filelist
-type filelist struct {
-	Dir   string
-	Files []file
-	next  uint64
-}
-
-func (lt *localTime) UnmarshalJSON(b []byte) (err error) {
-	// Parse date string in local time (it does not provide any timezone information)
-	lt.Time, err = time.ParseInLocation(`"2006-01-02T15:04:05"`, string(b), time.Local)
-	return err
-}
 
 type excludes struct {
 	excls []string
@@ -82,61 +49,6 @@ func cleanPath(path string) string {
 	cleanedPath := multiSlashRegex.ReplaceAllString(path, "/")
 	cleanedPath = strings.TrimSuffix(cleanedPath, "/")
 	return cleanedPath
-}
-
-// download will perform a GET request on the given URL and return
-// the content of the response, a duration on how long it took (including
-// setup of connection) or an error in case something went wrong
-func download(url string) ([]byte, *time.Duration, error) {
-	start := time.Now()
-	resp, err := httpClient.Get(url)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	duration := time.Since(start)
-	if err != nil {
-		return nil, nil, err
-	}
-	return body, &duration, nil
-}
-
-func getFileList(baseURL string, dir string, first uint64) (*filelist, error) {
-
-	body, _, err := download(baseURL + fileListURL + dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var fl filelist
-	err = json.Unmarshal(body, &fl)
-	if err != nil {
-		return nil, err
-	}
-
-	// If the response signals there is more to fetch do it recursively
-	if fl.next > 0 {
-		moreFiles, err := getFileList(baseURL, dir, fl.next)
-		if err != nil {
-			return nil, err
-		}
-		fl.Files = append(fl.Files, moreFiles.Files...)
-	}
-
-	// Sort folders first and by name
-	sort.SliceStable(fl.Files, func(i, j int) bool {
-
-		// Both same type so compare by name
-		if fl.Files[i].Type == fl.Files[j].Type {
-			return fl.Files[i].Name < fl.Files[j].Name
-		}
-
-		// Different types -> sort folders first
-		return fl.Files[i].Type == typeDirectory
-	})
-	return &fl, nil
 }
 
 // ensureOutDirExists will create the local directory if it does not exist
@@ -173,14 +85,14 @@ func ensureOutDirExists(outDir string, verbose bool) error {
 	return nil
 }
 
-func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls excludes, removeLocal, verbose bool) error {
+func updateLocalFiles(fl *rrffm.Filelist, outDir string, excls excludes, removeLocal, verbose bool) error {
 
 	if err := ensureOutDirExists(outDir, verbose); err != nil {
 		return err
 	}
 
 	for _, file := range fl.Files {
-		if file.Type == typeDirectory {
+		if file.IsDir() {
 			continue
 		}
 		remoteFilename := fl.Dir + "/" + file.Name
@@ -200,12 +112,12 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 		}
 
 		// File does not exist or is outdated so get it
-		if fi == nil || fi.ModTime().Before(file.Date.Time) {
+		if fi == nil || fi.ModTime().Before(file.Date()) {
 			if verbose {
 			}
 
 			// Download file
-			body, duration, err := download(baseURL + fileDownloadURL + url.QueryEscape(remoteFilename))
+			body, duration, err := rfm.GetFile(remoteFilename)
 			if err != nil {
 				return err
 			}
@@ -232,7 +144,7 @@ func updateLocalFiles(baseURL string, fl *filelist, outDir string, excls exclude
 			}
 
 			// Adjust mtime
-			os.Chtimes(fileName, file.Date.Time, file.Date.Time)
+			os.Chtimes(fileName, file.Date(), file.Date())
 		} else {
 			if verbose {
 				log.Println("  Up-to-date:", remoteFilename)
@@ -262,7 +174,7 @@ func isManagedDirectory(basePath string, f os.FileInfo) bool {
 	return true
 }
 
-func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
+func removeDeletedFiles(fl *rrffm.Filelist, outDir string, verbose bool) error {
 
 	// Pseudo hash-set of known remote filenames
 	existingFiles := make(map[string]struct{})
@@ -294,7 +206,7 @@ func removeDeletedFiles(fl *filelist, outDir string, verbose bool) error {
 	return nil
 }
 
-func syncFolder(address, folder, outDir string, excls excludes, removeLocal, verbose bool) error {
+func syncFolder(folder, outDir string, excls excludes, removeLocal, verbose bool) error {
 
 	// Skip complete directories if they are covered by an exclude pattern
 	if excls.Contains(folder) {
@@ -303,13 +215,13 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 	}
 
 	log.Println("Fetching filelist for", folder)
-	fl, err := getFileList(address, url.QueryEscape(folder), 0)
+	fl, err := rfm.GetFilelist(folder)
 	if err != nil {
 		return err
 	}
 
 	log.Println("Downloading new/changed files from", folder, "to", outDir)
-	if err = updateLocalFiles(address, fl, outDir, excls, removeLocal, verbose); err != nil {
+	if err = updateLocalFiles(fl, outDir, excls, removeLocal, verbose); err != nil {
 		return err
 	}
 
@@ -322,30 +234,17 @@ func syncFolder(address, folder, outDir string, excls excludes, removeLocal, ver
 
 	// Traverse into subdirectories
 	for _, file := range fl.Files {
-		if file.Type != typeDirectory {
+		if !file.IsDir() {
 			continue
 		}
 		remoteFilename := fl.Dir + "/" + file.Name
 		fileName := filepath.Join(outDir, file.Name)
-		if err = syncFolder(address, remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
+		if err = syncFolder(remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-func getAddress(domain string, port uint64) string {
-	return "http://" + domain + ":" + strconv.FormatUint(port, 10)
-}
-
-func connect(address, password string, verbose bool) error {
-	if verbose {
-		log.Println("Trying to connect to Duet")
-	}
-	path := "/rr_connect?password=" + url.QueryEscape(password) + "&time=" + url.QueryEscape(time.Now().Format("2006-01-02T15:04:05"))
-	_, err := httpClient.Get(address + path)
-	return err
 }
 
 func main() {
@@ -372,13 +271,10 @@ func main() {
 		log.Fatal("Invalid port", port)
 	}
 
-	tr := &http.Transport{DisableCompression: true}
-	httpClient = &http.Client{Transport: tr}
-
-	address := getAddress(domain, port)
+	rfm = rrffm.New(domain, port, verbose)
 
 	// Try to connect
-	if err := connect(address, password, verbose); err != nil {
+	if err := rfm.Connect(password); err != nil {
 		log.Println("Duet currently not available")
 		os.Exit(0)
 	}
@@ -390,7 +286,7 @@ func main() {
 		absPath = outDir
 	}
 
-	if err = syncFolder(address, cleanPath(dirToBackup), absPath, excls, removeLocal, verbose); err != nil {
+	if err = syncFolder(cleanPath(dirToBackup), absPath, excls, removeLocal, verbose); err != nil {
 		log.Fatal(err)
 	}
 }
