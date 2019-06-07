@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -9,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wilriker/duetbackup/rrffm"
+	"github.com/wilriker/rrffm"
 )
 
 const (
@@ -95,7 +96,7 @@ func updateLocalFiles(fl *rrffm.Filelist, outDir string, excls excludes, removeL
 		if file.IsDir() {
 			continue
 		}
-		remoteFilename := fl.Dir + "/" + file.Name
+		remoteFilename := fmt.Sprintf("%s/%s", fl.Dir, file.Name)
 
 		// Skip files covered by an exclude pattern
 		if excls.Contains(remoteFilename) {
@@ -237,7 +238,7 @@ func syncFolder(folder, outDir string, excls excludes, removeLocal, verbose bool
 		if !file.IsDir() {
 			continue
 		}
-		remoteFilename := fl.Dir + "/" + file.Name
+		remoteFilename := fmt.Sprintf("%s/%s", fl.Dir, file.Name)
 		fileName := filepath.Join(outDir, file.Name)
 		if err = syncFolder(remoteFilename, fileName, excls, removeLocal, verbose); err != nil {
 			return err
@@ -278,6 +279,7 @@ func main() {
 		log.Println("Trying to connect to Duet")
 	}
 	if err := rfm.Connect(password); err != nil {
+		log.Fatal(err)
 		log.Println("Duet currently not available")
 		os.Exit(0)
 	}
