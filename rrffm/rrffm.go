@@ -33,11 +33,11 @@ type RRFFileManager interface {
 	// Connect establishes a connection to RepRapFirmware
 	Connect(password string) error
 
-	// GetFilelist will download a list of all files (also including directories) for the given path
-	GetFilelist(path string) (*Filelist, error)
+	// Filelist will download a list of all files (also including directories) for the given path
+	Filelist(path string) (*Filelist, error)
 
 	// GetFile downloads a file with the given path also returning the duration of this action
-	GetFile(filepath string) ([]byte, *time.Duration, error)
+	Download(filepath string) ([]byte, *time.Duration, error)
 
 	// Mkdir creates a new directory with the given path
 	Mkdir(path string) error
@@ -81,7 +81,7 @@ func (rrffm *rrffm) Connect(password string) error {
 	return err
 }
 
-func (rrffm *rrffm) GetFilelist(dir string) (*Filelist, error) {
+func (rrffm *rrffm) Filelist(dir string) (*Filelist, error) {
 	return rrffm.getFileListRecursively(url.QueryEscape(dir), 0)
 }
 
@@ -121,7 +121,7 @@ func (rrffm *rrffm) getFileListRecursively(dir string, first uint64) (*Filelist,
 	return &fl, nil
 }
 
-func (rrffm *rrffm) GetFile(filepath string) ([]byte, *time.Duration, error) {
+func (rrffm *rrffm) Download(filepath string) ([]byte, *time.Duration, error) {
 	return rrffm.doGetRequest(fmt.Sprintf(fileDownloadURL, rrffm.baseURL, url.QueryEscape(filepath)))
 }
 
@@ -193,7 +193,7 @@ func (rrffm *rrffm) Delete(path string) error {
 }
 
 func (rrffm *rrffm) DeleteRecursive(path string) error {
-	fl, err := rrffm.GetFilelist(path)
+	fl, err := rrffm.Filelist(path)
 	if err != nil {
 		return err
 	}

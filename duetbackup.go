@@ -117,7 +117,7 @@ func updateLocalFiles(fl *rrffm.Filelist, outDir string, excls excludes, removeL
 			}
 
 			// Download file
-			body, duration, err := rfm.GetFile(remoteFilename)
+			body, duration, err := rfm.Download(remoteFilename)
 			if err != nil {
 				return err
 			}
@@ -215,7 +215,7 @@ func syncFolder(folder, outDir string, excls excludes, removeLocal, verbose bool
 	}
 
 	log.Println("Fetching filelist for", folder)
-	fl, err := rfm.GetFilelist(folder)
+	fl, err := rfm.Filelist(folder)
 	if err != nil {
 		return err
 	}
