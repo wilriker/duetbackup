@@ -18,11 +18,11 @@ func main() {
 
 	flag.StringVar(&domain, "domain", "", "Domain of Duet Wifi")
 	flag.Uint64Var(&port, "port", 80, "Port of Duet Wifi")
+	flag.StringVar(&password, "password", "reprap", "Connection password")
+	flag.BoolVar(&verbose, "verbose", false, "Output more details")
 	flag.StringVar(&dirToBackup, "dirToBackup", duetbackup.SysDir, "Directory on Duet to create a backup of")
 	flag.StringVar(&outDir, "outDir", "", "Output dir of backup")
-	flag.StringVar(&password, "password", "reprap", "Connection password")
 	flag.BoolVar(&removeLocal, "removeLocal", false, "Remove files locally that have been deleted on the Duet")
-	flag.BoolVar(&verbose, "verbose", false, "Output more details")
 	flag.Var(&excls, "exclude", "Exclude paths starting with this string (can be passed multiple times)")
 	flag.Parse()
 
@@ -41,7 +41,6 @@ func main() {
 		log.Println("Trying to connect to Duet")
 	}
 	if err := rfm.Connect(password); err != nil {
-		log.Fatal(err)
 		log.Println("Duet currently not available")
 		os.Exit(0)
 	}

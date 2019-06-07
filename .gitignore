@@ -1,4 +1,4 @@
-./duetbackup
-./duetbackup-*
-./duetbackup.exe
-./*.tgz
+duetbackup
+duetbackup-*
+duetbackup.exe
+*.tgz
