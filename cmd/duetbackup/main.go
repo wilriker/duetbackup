@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/wilriker/duetbackup"
-	"github.com/wilriker/rrffm"
+	"github.com/wilriker/librfm"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 		log.Fatal("Invalid port", port)
 	}
 
-	rfm := rrffm.New(domain, port)
+	rfm := librfm.New(domain, port)
 
 	// Try to connect
 	if verbose {

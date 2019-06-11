@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wilriker/rrffm"
+	"github.com/wilriker/librfm"
 )
 
 const (
@@ -35,11 +35,11 @@ type Backup interface {
 }
 
 type backup struct {
-	rfm     rrffm.RRFFileManager
+	rfm     librfm.RRFFileManager
 	verbose bool
 }
 
-func New(rfm rrffm.RRFFileManager, verbose bool) Backup {
+func New(rfm librfm.RRFFileManager, verbose bool) Backup {
 	return &backup{
 		rfm:     rfm,
 		verbose: verbose,
@@ -80,7 +80,7 @@ func (b *backup) ensureOutDirExists(outDir string) error {
 	return nil
 }
 
-func (b *backup) updateLocalFiles(fl *rrffm.Filelist, outDir string, excls Excludes, removeLocal bool) error {
+func (b *backup) updateLocalFiles(fl *librfm.Filelist, outDir string, excls Excludes, removeLocal bool) error {
 
 	if err := b.ensureOutDirExists(outDir); err != nil {
 		return err
@@ -167,7 +167,7 @@ func (b *backup) isManagedDirectory(basePath string, f os.FileInfo) bool {
 	return true
 }
 
-func (b *backup) removeDeletedFiles(fl *rrffm.Filelist, outDir string) error {
+func (b *backup) removeDeletedFiles(fl *librfm.Filelist, outDir string) error {
 
 	// Pseudo hash-set of known remote filenames
 	existingFiles := make(map[string]struct{})
